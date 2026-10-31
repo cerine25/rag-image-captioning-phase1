@@ -182,6 +182,16 @@ siglip-b16 (1, 1) (1, 1)
 To select another available image encoder explicitly, pass for example
 `Release(encoder="clip-b32")`.
 
+`Release()` uses the relative path `artifacts/` and, when no encoder is given,
+reads `config.yaml` from the current directory. Run it from the repository root
+(Windows, Linux, macOS and Colab alike). To use it from another directory, pass
+both arguments explicitly, for example
+`Release(root="/path/to/artifacts", encoder="siglip-b16")`.
+
+To get an image file path, always use `Release.image_path(split, image_id)`; it
+builds a portable path and does not depend on the `path_rgb` column of
+`images.csv` (see the errata at the end of this card).
+
 ## Anti-leakage and reproducibility
 
 - The saved split IDs are pairwise disjoint; validation and test images are not
@@ -194,14 +204,20 @@ To select another available image encoder explicitly, pass for example
   primary-encoder cosine similarity and perceptual dHash; details and current
   results are in [`reports/leakage_audit.md`](../reports/leakage_audit.md).
 - The split seed is 42 (see the manifest and `splits_meta.json`).
-- Verify the frozen release from the repository root with:
+- Verify the frozen release from the repository root with (any OS, from an
+  activated environment):
 
-  ```powershell
-  .\.venv\Scripts\python.exe tools\run_freeze_only.py --verify
+  ```bash
+  python tools/run_freeze_only.py --verify
   ```
 
+  On Windows with the project virtual environment this is
+  `.\.venv\Scripts\python.exe tools\run_freeze_only.py --verify`.
+
   The verifier checks the SHA-256 values in `artifacts/manifest.json`; that
-  manifest lists 10,270 hashed files.
+  manifest lists 10,270 hashed files. The same check is available from Python:
+  `Release().verify()` returns the list of files that are missing or whose hash
+  differs; an empty list means the release is intact.
 
 ## Known limitations
 
@@ -224,3 +240,29 @@ To select another available image encoder explicitly, pass for example
 - Frozen artifact files are read-only after release freeze. Treat any
   re-embedding or data change as a new release; do not run artifact-producing
   pipeline stages against this release in place.
+
+## Errata for `g1-v1.1`
+
+These points were found after the freeze. Files under `artifacts/` are frozen
+and hashed, so they are **not** changed in place; they are corrected in the
+next release (suggested name `g1-v1.2`). Until then, use the workarounds below.
+
+1. **`path_rgb` in `artifacts/tables/images.csv` uses Windows separators**
+   (`images_rgb\kb\000000000078.jpg`) in all 10,200 rows. On Linux, macOS and
+   Colab such a path is not found. Workaround: use
+   `Release.image_path(split, image_id)`, or load `patches/images.csv`, which is
+   identical except that `path_rgb` uses `/` (verified: no other field differs).
+   Alternatively, in pandas: `df["path_rgb"] = df["path_rgb"].str.replace("\\", "/", regex=False)`.
+2. **`width` and `height` in `images.csv`.** For 8,747 rows `resized` is `True`
+   while `width`/`height` can exceed the configured `max_side` of 512 (the
+   largest value is 640). These two columns should therefore not be assumed to
+   describe the stored JPEG in `images_rgb/`. To get the stored size, open the
+   image file (for example with Pillow). This is to be clarified in `g1-v1.2`
+   (either rename the columns or correct the values).
+3. **Version labels.** `artifacts/eda/EDA_REPORT.md` and
+   `artifacts/splits/splits_meta.json` still carry the label `g1-v1.0`; the
+   release identity is the one in `artifacts/manifest.json` (`g1-v1.1`). The
+   split IDs and their hashes are unchanged between the two versions.
+4. **Recorded Python versions differ**: `splits_meta.json` records 3.14.2,
+   `manifest.json` records 3.13.7, and `SIGLIP_ENV_NOTE.txt` records 3.13.3.
+   `requirements.txt` pins the versions of the `g1-v1.1` manifest (3.13.7).
